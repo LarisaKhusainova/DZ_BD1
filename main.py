@@ -1,13 +1,17 @@
 import psycopg2
 
-def create_db(conn):
-    with conn.cursor() as cur:
+def delete_table(con):
+    with con.cursor() as cur:
         cur.execute("""
             DROP TABLE if exists telTb;
             """)
         cur.execute("""
             DROP TABLE if exists clientTb;
             """)
+
+def create_db(conn):
+    with conn.cursor() as cur:
+        delete_table(conn)
         cur.execute("""
             create table if not exists clientTb (
             id serial primary key,
@@ -26,10 +30,42 @@ def create_db(conn):
 
 def add_client(conn, first_name, last_name, email, phone=None):
     with conn.cursor() as cur:
+        if find_client(conn, email=email):  # Ищем клиента с таким имейлом
+            return "Данный email уже существует "  # Сообщаем пользователю, что клиент с таким имейлом уже есть
+
         cur.execute("""
-            INSERT INTO clientTb (name,fam,email) VALUES (%s,%s,%s);
+            INSERT INTO clientTb (name,fam,email) VALUES (%s,%s,%s) RETURNING id;
         """, (first_name,last_name,email))
         conn.commit()
+        if phone:  # Проверяем передали ли телефон при добавлении контакта
+            client_id = cur.fetchone()  # получаем из запроса идентификационный номер и сохраняем в переменную
+            add_rez = add_phone(conn, client_id, phone)  # Вызываем функцию добавления номера телефона и рузультат сохраняем в переменную
+            if add_rez == 'Номер телефона уже зарегистрирован':  # Проверяем вернулось ли сообщение, которое равно тому, что сообщает о существовании номера
+                conn.rollback()  # Отменяем создание клиента
+                return "Добавление невозможно"  # Сообщаем что добавить невозможно
+        conn.commit()  # Делаем коммит у соединения
+        return "Добавление клиента произведено"  # Сообщаем что клиент добавлен
+
+def add_phone(conn, client_id: int, phone):
+    with conn.cursor() as curs:
+        if find_client(conn, phone=phone): #Ищем клиента с таким имейлом
+            return "Номер телефона уже зарегистрирован" #Соообщаем что такой номер есть
+        curs.execute(
+            """
+            SELECT clienttb.id from clienttb WHERE clienttb.id = %s; 
+            """,
+            (client_id,) #Передаем id клиента
+        )
+        if not curs.fetchone(): #Проверяем вернулась ли пустая коллекция
+            return "Клиент с указанным ID не найден" #Соообщаем что такого клиента нет
+        curs.execute(
+            """
+            INSERT INTO teltb (id_cl, tel) VALUES (%s, %s);
+            """,
+            (client_id, phone)
+        )
+        conn.commit() #Подтверждаем изменения
+    return "Номер телефона добавлен" #Возвращаем сообщение об успехе
 
 def add_client_phone(conn, first_name, last_name, email, phone):
     with conn.cursor() as cur:
@@ -38,19 +74,8 @@ def add_client_phone(conn, first_name, last_name, email, phone):
         """, (first_name,last_name,email))
         conn.commit()
         client_id=cur.fetchone()
-
-        cur.execute("""
-                    INSERT INTO telTb (id_cl, tel) VALUES (%s,%s);
-                """, (client_id, phone))
-        conn.commit()
-
-
-def add_phone(conn, client_id, phone):
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO telTb (id_cl, tel) VALUES (%s,%s);
-        """, (client_id,phone))
-        conn.commit()
+        if phone is not None:
+            add_phone(conn, client_id, phone)
 
 def change_client(conn, client_id, first_name=None, last_name=None, email=None):
         # pass
@@ -144,7 +169,7 @@ def find_client(conn, first_name=None, last_name=None, email=None, phone=None):
 with psycopg2.connect(database="client_db", user="postgres", password="qwer3") as connec:
     create_db(connec)
     add_client(connec, "Сергей", "Иванов", "090090002@qas.ru")
-    add_client(connec, "Борис", "Борисов", "020020002@qas.ru")
+    add_client(connec, "Борис", "Борисов", "020020002@qas.ru","020020002")
     add_client(connec, "Михаил", "Михайлов", "030030003@qas.ru")
     add_client(connec, "Андрей", "Андреев", "040040004@qas.ru")
     add_client(connec, "Николай", "Николаев", "050050005@qas.ru")
